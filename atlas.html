@@ -510,6 +510,9 @@ async function loadBars() {
     } catch (e) {
       if (my !== job) return;
       st.priceSrc = 'quotes';  // no candle history: build candles from live quotes instead
+      st.barsWhy = e.status === 404 && /chain service/.test(e.message)
+        ? 'the Worker is still running the old code. Paste the new worker/worker.js into Cloudflare and Deploy'
+        : 'candle history failed (' + (e.status || 'network') + ': ' + e.message + ')';
     }
   }
   await pollQuote();
@@ -521,8 +524,10 @@ async function pollQuote() {
     if (my !== job) return;
     const q = JSON.parse(text), p = q.last || (q.bid && q.ask ? (q.bid + q.ask) / 2 : null);
     if (p) st.ticks.push({ t: Math.floor(Date.now() / 1000), p });
-  } catch (e) { /* try again next tick */ }
-  if (!st.ticks.length && st.chain) st.ticks.push({ t: Math.floor(Date.now() / 1000), p: st.chain.spot });
+    $('msg').textContent = 'No candle history: ' + st.barsWhy + '. Building candles from live quotes until then.';
+  } catch (e) {
+    $('msg').textContent = 'No candles: ' + st.barsWhy + '.';
+  }
   st.bars = ticksToBars();
   $('priceBadge').textContent = 'Price · from live quotes since opened'; $('priceBadge').classList.add('warn');
   update(true);
