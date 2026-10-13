@@ -412,7 +412,7 @@ document.addEventListener('paste', e => {
 // Tickers outside the list fall back to CBOE's free 15-minute delayed feed when the browser can reach it.
 const REPO = 'https://github.com/FlashEb/Gamma-Wall';
 // Cloudflare Worker (worker/worker.js) that fetches any ticker live from Public; leave '' to skip it.
-const WORKER_URL = '';
+const WORKER_URL = 'https://gamma-wall.babayemie.workers.dev';
 let meta = { tickers: {}, order: [] }, current = (location.hash.slice(1) || 'SPY').toUpperCase(), loadedAsOf = 0;
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function drawButtons() {
