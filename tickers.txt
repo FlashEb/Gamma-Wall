@@ -1,0 +1,13 @@
+# One ticker per line. The refresh pulls each from Public; the page shows them as buttons.
+SPY
+QQQ
+IWM
+DIA
+AAPL
+NVDA
+TSLA
+MSFT
+AMZN
+META
+GOOGL
+AMD
