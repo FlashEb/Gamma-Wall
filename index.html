@@ -442,6 +442,7 @@ async function show(tk, force) {
   }
   if (!switching && !force) return;
   $('tkMsg').textContent = 'Looking up ' + tk + '…';
+  let workerErr = '';
   if (WORKER_URL) {
     try {
       const r = await fetch(WORKER_URL.replace(/\/$/, '') + '/chain?ticker=' + encodeURIComponent(tk));
@@ -459,8 +460,8 @@ async function show(tk, force) {
         current = chain.ticker; history.replaceState(null, '', '#' + current); drawButtons();
         $('tkMsg').textContent = 'Public has no options data for ' + tk + ' (' + (await r.text()).slice(0, 120) + ').';
         return;
-      }
-    } catch (e) { /* Worker unreachable: fall back to CBOE below */ }
+      } else workerErr = 'live lookup failed (' + r.status + ': ' + (await r.text()).slice(0, 120) + ')';
+    } catch (e) { workerErr = 'live lookup could not reach the Worker'; }  // fall back to CBOE below
   }
   for (const sym of [tk, '_' + tk]) {  // indexes like SPX use an underscore at CBOE
     try {
@@ -476,7 +477,7 @@ async function show(tk, force) {
     } catch (e) { /* try the next form, then give up */ }
   }
   current = chain.ticker; history.replaceState(null, '', '#' + current); drawButtons();  // keep showing what is on screen
-  $('tkMsg').innerHTML = esc(tk) + ' is not in your list yet. <a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">Add it to tickers.txt</a> and it will be fetched from Public within a few minutes.';
+  $('tkMsg').innerHTML = (workerErr ? esc(tk) + ': ' + esc(workerErr) + '. ' : '') + esc(tk) + ' is not in your list yet. <a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">Add it to tickers.txt</a> and it will be fetched from Public within a few minutes.';
 }
 async function pull() {
   try {
