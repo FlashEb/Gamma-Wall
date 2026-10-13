@@ -1,0 +1,411 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+
+<title>Gamma Wall</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Condensed:wght@400;600;700&family=JetBrains+Mono:wght@400;600;700&display=swap">
+<style>
+/* Layout: control strip on top, summary chips, then a scrollable strike x expiry grid with sticky strike column and header. Single dark look, by request. */
+:root {
+  color-scheme: dark;
+  --bg: #12141b;
+  --panel: #1a1d27;
+  --line: #262a37;
+  --fg: #e7e9f0;
+  --muted: #8a90a3;
+  --spot: #3b5bff;
+  --pos: #1fbf5f;
+  --neg: #e5484d;
+  --cell: #171a23;
+  --display: "IBM Plex Sans Condensed", "Arial Narrow", system-ui, sans-serif;
+  --mono: "JetBrains Mono", ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+}
+* { box-sizing: border-box; }
+body { background: var(--bg); color: var(--fg); font-family: var(--display); }
+.wrap { padding-inline: 16px; padding-block: 18px 32px; max-width: 1600px; margin: 0 auto; display: grid; gap: 14px; }
+header { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 16px; }
+h1 { font-size: 1.5rem; margin: 0; letter-spacing: .02em; font-weight: 700; }
+h1 .tk { color: var(--spot); font-family: var(--mono); }
+.sub { color: var(--muted); font-size: .9rem; }
+.badge { font-family: var(--mono); font-size: .72rem; text-transform: uppercase; letter-spacing: .08em; padding: 2px 8px; border-radius: 4px; border: 1px solid var(--line); color: var(--muted); }
+.badge.sample { color: #f0b74a; border-color: #5a4720; }
+
+.controls { display: flex; flex-wrap: wrap; gap: 10px 14px; align-items: end; background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px; }
+.ctl { display: grid; gap: 4px; }
+.ctl label { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+input, select, button { font: inherit; font-family: var(--mono); font-size: .85rem; color: var(--fg); background: var(--bg); border: 1px solid var(--line); border-radius: 6px; padding: 6px 8px; }
+input[type=number] { width: 7.5em; }
+button { cursor: pointer; background: #222737; }
+button:hover { border-color: var(--spot); }
+button.primary { background: var(--spot); border-color: var(--spot); color: #fff; font-weight: 600; }
+:focus-visible { outline: 2px solid var(--spot); outline-offset: 1px; }
+.drop { margin-left: auto; display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+.hint { font-size: .78rem; color: var(--muted); }
+
+.chips { display: grid; grid-template-columns: repeat(auto-fit, minmax(150px, 1fr)); gap: 10px; }
+.chip { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; display: grid; gap: 2px; min-width: 0; }
+.chip .k { font-size: .7rem; text-transform: uppercase; letter-spacing: .08em; color: var(--muted); }
+.chip .v { font-family: var(--mono); font-size: 1.1rem; font-weight: 600; font-variant-numeric: tabular-nums; }
+.chip .n { font-size: .75rem; color: var(--muted); font-family: var(--mono); }
+.pos { color: var(--pos); } .neg { color: var(--neg); }
+
+.detail { font-family: var(--mono); font-size: .8rem; color: var(--muted); min-height: 1.3em; overflow-wrap: anywhere; }
+.detail b { color: var(--fg); font-weight: 600; }
+
+.gridbox { overflow: auto; max-height: 72vh; border: 1px solid var(--line); border-radius: 8px; background: var(--cell); }
+table { border-collapse: separate; border-spacing: 0; font-family: var(--mono); font-size: .82rem; font-variant-numeric: tabular-nums; }
+th, td { padding: 0 10px; height: 31px; white-space: nowrap; text-align: center; border-bottom: 1px solid var(--line); }
+thead th { position: sticky; top: 0; z-index: 2; background: var(--panel); color: var(--muted); font-weight: 400; font-size: .74rem; height: 26px; }
+thead th .d { display: block; font-size: .64rem; opacity: .7; line-height: 1; }
+tbody th { position: sticky; left: 0; z-index: 1; background: var(--panel); text-align: left; font-weight: 700; color: #c9cddb; min-width: 72px; }
+thead th:first-child { left: 0; z-index: 3; }
+td { color: var(--fg); min-width: 84px; cursor: default; }
+td.tot { border-left: 2px solid var(--line); font-weight: 600; }
+tr.spot th { color: var(--spot); box-shadow: inset 3px 0 0 var(--spot); }
+tr.spot th, tr.spot td { border-top: 1px solid var(--spot); border-bottom: 1px solid var(--spot); }
+td.sel { outline: 1px solid #fff; outline-offset: -1px; }
+.empty { padding: 40px 16px; text-align: center; color: var(--muted); }
+.legend { display: flex; gap: 8px; align-items: center; font-size: .75rem; color: var(--muted); flex-wrap: wrap; }
+.ramp { width: 160px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, var(--neg), var(--cell) 50%, var(--pos)); border: 1px solid var(--line); }
+details { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 10px 12px; font-size: .88rem; color: #c9cddb; }
+details summary { cursor: pointer; color: var(--fg); font-weight: 600; }
+details p, details li { line-height: 1.5; max-width: 80ch; }
+code { font-family: var(--mono); font-size: .82em; background: var(--bg); padding: 1px 4px; border-radius: 3px; }
+.err { color: var(--neg); }
+</style>
+
+</head><body>
+<div class="wrap">
+  <header>
+    <h1>Gamma Wall <span class="tk" id="tkr">DEMO</span></h1>
+    <span class="badge" id="srcBadge">Sample data</span>
+    <span class="sub" id="asof"></span>
+  </header>
+
+  <div class="controls">
+    <div class="ctl"><label for="spot">Spot price</label><input id="spot" type="number" step="0.01"></div>
+    <div class="ctl"><label for="range">Strike range ±%</label><input id="range" type="number" min="1" max="100" value="8"></div>
+    <div class="ctl"><label for="maxExp">Expiries shown</label><input id="maxExp" type="number" min="1" max="60" value="13"></div>
+    <div class="ctl"><label for="metric">Show</label>
+      <select id="metric"><option value="net">Net GEX (calls − puts)</option><option value="call">Call GEX</option><option value="put">Put GEX</option></select></div>
+    <div class="ctl"><label for="scale">Color scale</label>
+      <select id="scale"><option value="col">Per expiry</option><option value="all">Whole grid</option></select></div>
+    <div class="drop">
+      <input id="file" type="file" accept=".json,.csv,.txt,text/csv,application/json" hidden>
+      <button class="primary" id="loadBtn" type="button">Load options chain…</button>
+      <button id="demoBtn" type="button">Sample data</button>
+      <span class="hint">or drop / paste a CBOE JSON or CSV here</span>
+    </div>
+  </div>
+
+  <div class="chips" id="chips"></div>
+  <div class="legend"><span class="neg">−</span><span class="ramp"></span><span class="pos">+</span><span>Dollar gamma per 1% move. Dealers assumed long calls / short puts. Click a cell for detail.</span></div>
+  <div class="detail" id="detail"></div>
+  <div class="gridbox" id="gridbox"></div>
+
+  <details>
+    <summary>How to load a real ticker</summary>
+    <ul>
+      <li><b>Free, 15-min delayed (CBOE):</b> open <code>https://cdn.cboe.com/api/global/delayed_quotes/options/SPY.json</code> in your browser (swap <code>SPY</code> for your ticker; indexes use an underscore, e.g. <code>_SPX</code>), save the page as a .json file, then drop it here. It already includes open interest, IV, gamma and the spot price.</li>
+      <li><b>Any CSV export</b> (broker, Barchart, ThinkorSwim, etc.) with one row per contract and columns for <code>strike</code>, <code>expiration</code>, <code>type</code> (C/P), <code>open_interest</code>, and either <code>gamma</code> or <code>iv</code>. An OCC <code>symbol</code> column can stand in for strike/expiry/type. Set the spot price above.</li>
+    </ul>
+    <p>Per contract: GEX = gamma × open interest × 100 × spot² × 1%. Calls count positive, puts negative. When a file has no gamma, it is computed with Black‑Scholes from IV (r = 4%). Everything runs in your browser; nothing is uploaded.</p>
+  </details>
+</div>
+
+<script>
+(() => {
+const $ = id => document.getElementById(id);
+const DAY = 86400000;
+let chain = null; // {ticker, spot, asOf, source, rows:[{k, exp:Date, dte, type:'C'|'P', oi, gamma|null, iv|null}]}
+let selKey = null;
+
+// ---------- math ----------
+const npdf = x => Math.exp(-0.5 * x * x) / Math.sqrt(2 * Math.PI);
+function bsGamma(S, K, T, iv, r = 0.04) {
+  if (!(S > 0 && K > 0 && iv > 0)) return 0;
+  T = Math.max(T, 0.5 / 365);
+  const d1 = (Math.log(S / K) + (r + iv * iv / 2) * T) / (iv * Math.sqrt(T));
+  return npdf(d1) / (S * iv * Math.sqrt(T));
+}
+function fmt$(v) {
+  if (v == null) return '';
+  const a = Math.abs(v), s = v < 0 ? '-' : '';
+  if (a >= 1e9) return s + '$' + (a / 1e9).toFixed(1) + 'B';
+  if (a >= 1e6) return s + '$' + (a / 1e6).toFixed(1) + 'M';
+  if (a >= 1e3) return s + '$' + (a / 1e3).toFixed(1) + 'K';
+  return s + '$' + a.toFixed(1);
+}
+const fmtK = k => '$' + (Number.isInteger(k) ? k : k.toFixed(k * 10 % 1 ? 2 : 1));
+
+// ---------- sample chain ----------
+function sampleChain() {
+  let seed = 7;
+  const rnd = () => (seed = (seed * 16807) % 2147483647) / 2147483647;
+  const S = 142.3, today = new Date(); today.setHours(0, 0, 0, 0);
+  const dtes = [3, 10, 17, 24, 31, 38, 45, 66, 94, 129, 157, 220, 247];
+  const rows = [];
+  dtes.forEach((dte, i) => {
+    const exp = new Date(+today + dte * DAY);
+    const weight = 1 / (1 + i * 0.35);
+    const step = dte > 60 ? 5 : 1;
+    for (let k = 115; k <= 170; k += step) {
+      const round = k % 10 === 0 ? 6 : k % 5 === 0 ? 3.2 : 1;
+      const dist = Math.exp(-Math.pow((k - S) / (S * 0.09), 2));
+      const base = 9000 * weight * round * dist * (0.35 + rnd() * 1.3);
+      const skew = (k - S) / S;
+      const iv = 0.27 + 0.9 * skew * skew - 0.25 * skew + 0.02 * Math.sqrt(30 / dte);
+      const callOi = Math.round(base * (k >= S ? 1.3 : 0.95) * (0.5 + rnd()));
+      const putOi = Math.round(base * (k < S ? 0.85 : 0.35) * (0.4 + rnd() * 1.1));
+      if (callOi) rows.push({ k, exp, dte, type: 'C', oi: callOi, gamma: null, iv });
+      if (putOi) rows.push({ k, exp, dte, type: 'P', oi: putOi, gamma: null, iv });
+    }
+  });
+  return { ticker: 'DEMO', spot: S, asOf: new Date(), source: 'sample', rows };
+}
+
+// ---------- parsing ----------
+const OCC = /^([A-Z._]+?)\s*(\d{6})([CP])(\d{8})$/;
+function parseOcc(sym) {
+  const m = OCC.exec(String(sym).trim().toUpperCase());
+  if (!m) return null;
+  const [, root, d, t, k] = m;
+  return { root, exp: new Date(2000 + +d.slice(0, 2), +d.slice(2, 4) - 1, +d.slice(4, 6)), type: t, k: +k / 1000 };
+}
+function finish(rows, spot, ticker, asOf, source) {
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  rows.forEach(r => { r.dte = Math.max(0, Math.round((r.exp - today) / DAY)); });
+  rows = rows.filter(r => r.dte >= 0 && r.k > 0 && r.oi > 0 && !isNaN(r.exp));
+  if (!rows.length) throw new Error('No contracts with open interest found in that file.');
+  if (!(spot > 0)) { // fall back to strike with largest total OI
+    const by = {}; rows.forEach(r => by[r.k] = (by[r.k] || 0) + r.oi);
+    spot = +Object.entries(by).sort((a, b) => b[1] - a[1])[0][0];
+  }
+  return { ticker: (ticker || 'CHAIN').replace(/^_/, ''), spot, asOf, source, rows };
+}
+function parseCboe(j) {
+  const d = j.data || j;
+  const rows = [];
+  for (const o of d.options || []) {
+    const p = parseOcc(o.option); if (!p) continue;
+    rows.push({ k: p.k, exp: p.exp, type: p.type, oi: +o.open_interest || 0,
+      gamma: o.gamma != null && +o.gamma > 0 ? +o.gamma : null, iv: +o.iv || null });
+  }
+  const spot = +d.current_price || +d.close || +d.prev_day_close;
+  return finish(rows, spot, d.symbol, j.timestamp ? new Date(j.timestamp.replace(' ', 'T')) : new Date(), 'CBOE delayed');
+}
+function splitCsv(line) {
+  const out = []; let cur = '', q = false;
+  for (let i = 0; i < line.length; i++) {
+    const c = line[i];
+    if (q) { if (c === '"') { if (line[i + 1] === '"') { cur += '"'; i++; } else q = false; } else cur += c; }
+    else if (c === '"') q = true; else if (c === ',' || c === '\t' || c === ';') { out.push(cur); cur = ''; } else cur += c;
+  }
+  out.push(cur); return out.map(s => s.trim());
+}
+function parseDate(s) {
+  s = String(s).trim(); if (!s) return NaN;
+  let m = /^(\d{4})-?(\d{2})-?(\d{2})/.exec(s); if (m) return new Date(+m[1], +m[2] - 1, +m[3]);
+  m = /^(\d{1,2})\/(\d{1,2})\/(\d{2,4})/.exec(s); if (m) return new Date(+m[3] < 100 ? 2000 + +m[3] : +m[3], +m[1] - 1, +m[2]);
+  const d = new Date(s); d.setHours(0, 0, 0, 0); return d;
+}
+function parseCsv(text) {
+  const lines = text.split(/\r?\n/).filter(l => l.trim());
+  const hi = lines.findIndex(l => /strike|symbol|option/i.test(l));
+  if (hi < 0) throw new Error('Could not find a header row with a strike or symbol column.');
+  const H = splitCsv(lines[hi]).map(h => h.toLowerCase().replace(/[^a-z0-9]/g, ''));
+  const col = (...names) => H.findIndex(h => names.includes(h));
+  const c = {
+    sym: col('symbol', 'option', 'optionsymbol', 'contractsymbol', 'occsymbol'),
+    k: col('strike', 'strikeprice', 'k'),
+    exp: col('expiration', 'expiry', 'exp', 'expirationdate', 'expdate', 'maturity'),
+    t: col('type', 'optiontype', 'cp', 'callput', 'putcall', 'right', 'side'),
+    oi: col('openinterest', 'oi', 'openint'),
+    g: col('gamma'),
+    iv: col('iv', 'impliedvolatility', 'impvol', 'volatility', 'impliedvol'),
+    spot: col('underlyingprice', 'spot', 'underlying', 'underlyinglast', 'stockprice'),
+    root: col('underlyingsymbol', 'ticker', 'root', 'underlyingticker'),
+  };
+  if (c.oi < 0) throw new Error('The CSV needs an open interest column (open_interest or oi).');
+  const rows = []; let spot = 0, ticker = '';
+  for (const line of lines.slice(hi + 1)) {
+    const f = splitCsv(line);
+    const num = i => i < 0 ? NaN : parseFloat(String(f[i] ?? '').replace(/[$,%]/g, ''));
+    let k = num(c.k), exp = c.exp >= 0 ? parseDate(f[c.exp]) : NaN, type = c.t >= 0 ? String(f[c.t] || '').trim().toUpperCase()[0] : '';
+    if (c.sym >= 0) { const p = parseOcc(f[c.sym]); if (p) { k = isNaN(k) ? p.k : k; exp = isNaN(exp) ? p.exp : exp; type = type || p.type; ticker = ticker || p.root; } else if (!ticker && /^[A-Z._]{1,6}$/i.test(f[c.sym] || '')) ticker = f[c.sym].toUpperCase(); }
+    if (type !== 'C' && type !== 'P') continue;
+    let iv = num(c.iv); if (iv > 3) iv /= 100;
+    const g = num(c.g);
+    rows.push({ k, exp, type, oi: num(c.oi) || 0, gamma: g > 0 ? g : null, iv: iv > 0 ? iv : null });
+    if (!spot && c.spot >= 0) spot = num(c.spot) || 0;
+    if (!ticker && c.root >= 0) ticker = f[c.root];
+  }
+  return finish(rows, spot || +$('spot').value, ticker, new Date(), 'CSV');
+}
+function ingest(text, name = '') {
+  try {
+    text = text.replace(/^﻿/, '').trim();
+    chain = /^[\[{]/.test(text) ? parseCboe(JSON.parse(text)) : parseCsv(text);
+    if (chain.source === 'CSV' && name) chain.source = 'CSV · ' + name;
+    $('spot').value = chain.spot.toFixed(2);
+    selKey = null; render();
+  } catch (e) {
+    $('detail').innerHTML = '<span class="err">Could not read that file: ' + e.message.replace(/</g, '&lt;') + '</span>';
+  }
+}
+
+// ---------- compute + render ----------
+function compute() {
+  const S = +$('spot').value || chain.spot;
+  const range = (+$('range').value || 8) / 100;
+  const maxExp = Math.max(1, +$('maxExp').value || 13);
+  const lo = S * (1 - range), hi = S * (1 + range);
+  const dtes = [...new Set(chain.rows.map(r => r.dte))].sort((a, b) => a - b).slice(0, maxExp);
+  const dteSet = new Set(dtes);
+  const cells = new Map(); // `${k}|${dte}` -> {call, put, coi, poi}
+  const strikeTot = new Map(); const allStrike = new Map();
+  for (const r of chain.rows) {
+    const T = r.dte / 365;
+    // gamma from the file is at the file's spot; recompute when spot is overridden or gamma missing
+    const g = (r.gamma != null && Math.abs(S - chain.spot) < 1e-9) ? r.gamma : bsGamma(S, r.k, T, r.iv || 0.3);
+    const gex = g * r.oi * 100 * S * S * 0.01 * (r.type === 'C' ? 1 : -1);
+    allStrike.set(r.k, (allStrike.get(r.k) || 0) + gex);
+    if (!dteSet.has(r.dte) || r.k < lo || r.k > hi) continue;
+    const key = r.k + '|' + r.dte;
+    const c = cells.get(key) || { call: 0, put: 0, coi: 0, poi: 0, exp: r.exp };
+    if (r.type === 'C') { c.call += gex; c.coi += r.oi; } else { c.put += gex; c.poi += r.oi; }
+    cells.set(key, c);
+  }
+  const strikes = [...new Set([...cells.keys()].map(k => +k.split('|')[0]))].sort((a, b) => b - a);
+  return { S, dtes, cells, strikes, allStrike };
+}
+function val(c, metric) { return !c ? null : metric === 'call' ? c.call : metric === 'put' ? c.put : c.call + c.put; }
+function shade(v, max) {
+  if (v == null || !max) return '';
+  const t = Math.sqrt(Math.min(1, Math.abs(v) / max));
+  if (t < 0.28) return '';
+  const a = Math.round(18 + 82 * (t - 0.28) / 0.72);
+  return `background:color-mix(in srgb, ${v < 0 ? 'var(--neg)' : 'var(--pos)'} ${a}%, var(--cell))`;
+}
+function render() {
+  const metric = $('metric').value, scale = $('scale').value;
+  const { S, dtes, cells, strikes, allStrike } = compute();
+  $('tkr').textContent = chain.ticker;
+  const badge = $('srcBadge'); badge.textContent = chain.source === 'sample' ? 'Sample data' : chain.source; badge.classList.toggle('sample', chain.source === 'sample');
+  $('asof').textContent = (chain.source === 'sample' ? 'Synthetic chain, not market data · ' : 'As of ' + chain.asOf.toLocaleString() + ' · ') + chain.rows.length.toLocaleString() + ' contracts';
+
+  // summary chips (all expiries, all strikes)
+  const entries = [...allStrike.entries()];
+  const net = entries.reduce((s, [, v]) => s + v, 0);
+  const callWall = entries.reduce((b, e) => e[1] > b[1] ? e : b, [0, -Infinity]);
+  const putWall = entries.reduce((b, e) => e[1] < b[1] ? e : b, [0, Infinity]);
+  const flip = gammaFlip(S);
+  $('chips').innerHTML = [
+    ['Spot', '$' + S.toFixed(2), '', ''],
+    ['Net GEX', fmt$(net), net >= 0 ? 'pos' : 'neg', net >= 0 ? 'Dealers long gamma' : 'Dealers short gamma'],
+    ['Call wall', fmtK(callWall[0]), 'pos', fmt$(callWall[1]) + ' all expiries'],
+    ['Put wall', fmtK(putWall[0]), 'neg', fmt$(putWall[1]) + ' all expiries'],
+    ['Gamma flip', flip ? '$' + flip.toFixed(2) : 'n/a', '', flip ? (S > flip ? 'Spot above flip' : 'Spot below flip') : 'No sign change ±20%'],
+  ].map(([k, v, cls, n]) => `<div class="chip"><span class="k">${k}</span><span class="v ${cls}">${v}</span><span class="n">${n || '&nbsp;'}</span></div>`).join('');
+
+  if (!strikes.length) { $('gridbox').innerHTML = '<div class="empty">No strikes in this range. Widen the strike range.</div>'; return; }
+
+  // color normalization
+  const colMax = {}; let gMax = 0, totMax = 0;
+  const rowTot = {};
+  for (const k of strikes) {
+    rowTot[k] = 0;
+    for (const d of dtes) {
+      const v = val(cells.get(k + '|' + d), metric); if (v == null) continue;
+      rowTot[k] += v;
+      colMax[d] = Math.max(colMax[d] || 0, Math.abs(v)); gMax = Math.max(gMax, Math.abs(v));
+    }
+    totMax = Math.max(totMax, Math.abs(rowTot[k]));
+  }
+  const spotK = strikes.reduce((b, k) => Math.abs(k - S) < Math.abs(b - S) ? k : b, strikes[0]);
+  const today = new Date(); today.setHours(0, 0, 0, 0);
+  let h = '<table><thead><tr><th>Strike</th>' + dtes.map(d => {
+    const e = new Date(+today + d * DAY);
+    return `<th>${d}d<span class="d">${e.toLocaleDateString(undefined, { month: 'short', day: 'numeric' })}</span></th>`;
+  }).join('') + '<th>Total</th></tr></thead><tbody>';
+  for (const k of strikes) {
+    h += `<tr${k === spotK ? ' class="spot"' : ''}><th>${fmtK(k)}</th>`;
+    for (const d of dtes) {
+      const key = k + '|' + d, v = val(cells.get(key), metric);
+      const st = shade(v, scale === 'col' ? colMax[d] : gMax);
+      h += `<td data-key="${key}"${st ? ` style="${st}"` : ''}${key === selKey ? ' class="sel"' : ''}>${fmt$(v)}</td>`;
+    }
+    h += `<td class="tot" data-key="${k}|tot" style="${shade(rowTot[k], totMax)}">${fmt$(rowTot[k])}</td></tr>`;
+  }
+  $('gridbox').innerHTML = h + '</tbody></table>';
+  // keep spot row in view on first paint
+  const row = $('gridbox').querySelector('tr.spot');
+  if (row && !render.scrolled) { const box = $('gridbox'); box.scrollTop = row.offsetTop - box.clientHeight / 2; render.scrolled = true; }
+  render.last = { cells, metric, S };
+}
+function gammaFlip(S) {
+  // total GEX across a grid of hypothetical spots; find the sign change nearest spot
+  const pts = [];
+  for (let i = -40; i <= 40; i++) {
+    const x = S * (1 + i * 0.005); let tot = 0;
+    for (const r of chain.rows) tot += bsGamma(x, r.k, r.dte / 365, r.iv || 0.3) * r.oi * (r.type === 'C' ? 1 : -1);
+    pts.push([x, tot]);
+  }
+  let best = null;
+  for (let i = 1; i < pts.length; i++) {
+    const [x0, y0] = pts[i - 1], [x1, y1] = pts[i];
+    if (y0 === 0 || Math.sign(y0) !== Math.sign(y1)) {
+      const x = x0 + (x1 - x0) * (y0 / (y0 - y1));
+      if (best == null || Math.abs(x - S) < Math.abs(best - S)) best = x;
+    }
+  }
+  return best;
+}
+
+function showDetail(td) {
+  const key = td.dataset.key; if (!key || !render.last) return;
+  const [k, d] = key.split('|');
+  if (d === 'tot') { $('detail').innerHTML = `<b>${fmtK(+k)}</b> · all shown expiries · total <b>${td.textContent}</b>`; return; }
+  const c = render.last.cells.get(key);
+  if (!c) { $('detail').innerHTML = `<b>${fmtK(+k)}</b> · ${d}d · no open interest`; return; }
+  $('detail').innerHTML = `<b>${fmtK(+k)}</b> · ${d}d (${c.exp.toLocaleDateString()}) · calls <span class="pos">${fmt$(c.call)}</span> on ${c.coi.toLocaleString()} OI · puts <span class="neg">${fmt$(c.put)}</span> on ${c.poi.toLocaleString()} OI · net <b>${fmt$(c.call + c.put)}</b>`;
+}
+
+// ---------- events ----------
+$('gridbox').addEventListener('click', e => {
+  const td = e.target.closest('td'); if (!td) return;
+  $('gridbox').querySelectorAll('td.sel').forEach(x => x.classList.remove('sel'));
+  td.classList.add('sel'); selKey = td.dataset.key; showDetail(td);
+});
+$('gridbox').addEventListener('mouseover', e => { const td = e.target.closest('td'); if (td) showDetail(td); });
+['spot', 'range', 'maxExp', 'metric', 'scale'].forEach(id => $(id).addEventListener('input', () => chain && render()));
+$('loadBtn').addEventListener('click', () => $('file').click());
+$('demoBtn').addEventListener('click', () => { chain = sampleChain(); $('spot').value = chain.spot; render.scrolled = false; render(); });
+const readFile = f => f.text().then(t => { render.scrolled = false; ingest(t, f.name); });
+$('file').addEventListener('change', e => { const f = e.target.files[0]; if (f) readFile(f); e.target.value = ''; });
+document.addEventListener('dragover', e => e.preventDefault());
+document.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
+document.addEventListener('paste', e => {
+  if (e.target.closest && e.target.closest('input')) return;
+  const t = e.clipboardData.getData('text'); if (t && t.length > 50) { render.scrolled = false; ingest(t, 'pasted'); }
+});
+
+// Public chain: data/SPY.csv + data/meta.json, written by the scheduled GitHub Action; re-checked every 5 minutes
+let liveAsOf = 0;
+async function pull() {
+  try {
+    const meta = await (await fetch('data/meta.json?t=' + Date.now(), { cache: 'no-store' })).json();
+    const asOf = new Date(meta.asof);
+    if (!(+asOf > liveAsOf)) return;
+    // a file the viewer loaded by hand stays put until they reload
+    if (chain && !chain.source.startsWith('Public') && chain.source !== 'sample') return;
+    const csv = await (await fetch('data/SPY.csv?t=' + Date.now(), { cache: 'no-store' })).text();
+    ingest(csv, 'Public');
+    if (chain && chain.source.startsWith('CSV')) { liveAsOf = +asOf; chain.asOf = asOf; chain.source = 'Public · live'; render(); }
+  } catch (e) { /* no data yet: keep what is shown */ }
+}
+chain = sampleChain(); $('spot').value = chain.spot; render();
+pull(); setInterval(pull, 5 * 60 * 1000);
+})();
+</script>
+</body></html>
