@@ -6,7 +6,8 @@ jobs:
     steps:
       - run: |
           W=https://gamma-wall.babayemie.workers.dev
+          note() { echo "::notice title=$1::$(head -c 400 "$2" | tr '\n\r%' '   ')"; }
           for p in "/quote?ticker=SPY" "/bars?ticker=SPY&interval=1m" "/chain?ticker=SPY"; do
-            echo "== $p"; curl -s -m 30 -o body -w "%{http_code}\n" -H "Origin: https://flasheb.github.io" "$W$p"; head -c 300 body; echo
+            c=$(curl -s -m 30 -o body -w "%{http_code}" -H "Origin: https://flasheb.github.io" "$W$p"); note "$p $c" body
           done
-          echo "== yahoo direct"; curl -s -m 30 -o y -w "%{http_code}\n" -A "Mozilla/5.0" "https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1m&range=2d"; head -c 300 y; echo
+          c=$(curl -s -m 30 -o y -w "%{http_code}" -A "Mozilla/5.0" "https://query1.finance.yahoo.com/v8/finance/chart/SPY?interval=1m&range=2d"); note "yahoo $c" y
