@@ -411,6 +411,8 @@ document.addEventListener('paste', e => {
 // Chains: data/<TK>.csv + data/meta.json, written by the scheduled GitHub Action from Public; re-checked every 5 minutes.
 // Tickers outside the list fall back to CBOE's free 15-minute delayed feed when the browser can reach it.
 const REPO = 'https://github.com/FlashEb/Gamma-Wall';
+// Cloudflare Worker (worker/worker.js) that fetches any ticker live from Public; leave '' to skip it.
+const WORKER_URL = '';
 let meta = { tickers: {}, order: [] }, current = (location.hash.slice(1) || 'SPY').toUpperCase(), loadedAsOf = 0;
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function drawButtons() {
@@ -440,6 +442,26 @@ async function show(tk, force) {
   }
   if (!switching && !force) return;
   $('tkMsg').textContent = 'Looking up ' + tk + '…';
+  if (WORKER_URL) {
+    try {
+      const r = await fetch(WORKER_URL.replace(/\/$/, '') + '/chain?ticker=' + encodeURIComponent(tk));
+      if (tk !== current) return;
+      if (r.ok) {
+        const csv = await r.text();
+        render.scrolled = false; loadedAsOf = 0;
+        ingest(csv, 'Public');
+        if (chain && chain.source.startsWith('CSV')) {
+          chain.ticker = tk; chain.asOf = new Date(r.headers.get('X-As-Of') || Date.now()); chain.source = 'Public · on demand'; render();
+          $('tkMsg').innerHTML = esc(tk) + ' was fetched just now. <a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">Add it to your list</a> to keep it refreshing.';
+          return;
+        }
+      } else if (r.status === 404) {
+        current = chain.ticker; history.replaceState(null, '', '#' + current); drawButtons();
+        $('tkMsg').textContent = 'Public has no options data for ' + tk + ' (' + (await r.text()).slice(0, 120) + ').';
+        return;
+      }
+    } catch (e) { /* Worker unreachable: fall back to CBOE below */ }
+  }
   for (const sym of [tk, '_' + tk]) {  // indexes like SPX use an underscore at CBOE
     try {
       const j = await getText('https://cdn.cboe.com/api/global/delayed_quotes/options/' + sym + '.json');
@@ -464,6 +486,7 @@ async function pull() {
   } catch (e) { /* no data yet: keep what is shown */ }
   // a file the viewer loaded by hand stays put until they pick a ticker
   if (chain && !chain.source.startsWith('Public') && chain.source !== 'sample' && chain.source !== 'CBOE delayed') { drawButtons(); return; }
+  if (!meta.tickers[current] && chain && chain.ticker === current && chain.source !== 'sample') { drawButtons(); return; }
   show(current);
 }
 $('tkBtns').addEventListener('click', e => { const b = e.target.closest('button[data-tk]'); if (b) show(b.dataset.tk, true); });
