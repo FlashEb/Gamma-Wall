@@ -88,6 +88,7 @@ code { font-family: var(--mono); font-size: .82em; background: var(--bg); paddin
     <h1>Gamma Wall <span class="tk" id="tkr">DEMO</span></h1>
     <span class="badge" id="srcBadge">Sample data</span>
     <span class="sub" id="asof"></span>
+    <a id="atlasLink" href="atlas.html" style="margin-left:auto;color:var(--spot);font-size:.9rem">Gamma Atlas chart</a>
   </header>
 
   <div class="tickers" id="tickers">
@@ -422,7 +423,7 @@ function drawButtons() {
   $('tkList').innerHTML = list.map(t => `<option value="${esc(t)}">`).join('');
 }
 async function getText(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status); return r.text(); }
-function setHash(tk) { if (location.hash.slice(1) !== tk) history.replaceState(null, '', '#' + tk); }
+function setHash(tk) { $('atlasLink').href = 'atlas.html#' + tk; if (location.hash.slice(1) !== tk) history.replaceState(null, '', '#' + tk); }
 // put a chain on screen; same ticker + same timestamp is skipped so a refresh doesn't reset the view for nothing
 function put(tk, text, asOf, source, msg) {
   const key = tk + '|' + (+asOf);
