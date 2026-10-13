@@ -398,8 +398,8 @@ $('gridbox').addEventListener('click', e => {
 $('gridbox').addEventListener('mouseover', e => { const td = e.target.closest('td'); if (td) showDetail(td); });
 ['spot', 'range', 'maxExp', 'metric', 'scale'].forEach(id => $(id).addEventListener('input', () => chain && render()));
 $('loadBtn').addEventListener('click', () => $('file').click());
-$('demoBtn').addEventListener('click', () => { chain = sampleChain(); $('spot').value = chain.spot; render.scrolled = false; render(); });
-const readFile = f => f.text().then(t => { render.scrolled = false; ingest(t, f.name); });
+$('demoBtn').addEventListener('click', () => { shownKey = ''; chain = sampleChain(); $('spot').value = chain.spot; render.scrolled = false; render(); });
+const readFile = f => f.text().then(t => { render.scrolled = false; shownKey = ''; ingest(t, f.name); });
 $('file').addEventListener('change', e => { const f = e.target.files[0]; if (f) readFile(f); e.target.value = ''; });
 document.addEventListener('dragover', e => e.preventDefault());
 document.addEventListener('drop', e => { e.preventDefault(); const f = e.dataTransfer.files[0]; if (f) readFile(f); });
@@ -408,12 +408,13 @@ document.addEventListener('paste', e => {
   const t = e.clipboardData.getData('text'); if (t && t.length > 50) { render.scrolled = false; ingest(t, 'pasted'); }
 });
 
-// Chains: data/<TK>.csv + data/meta.json, written by the scheduled GitHub Action from Public; re-checked every 5 minutes.
-// Tickers outside the list fall back to CBOE's free 15-minute delayed feed when the browser can reach it.
+// Every ticker loads live from Public through the Cloudflare Worker (worker/worker.js) when it is shown, clicked or searched,
+// and the shown one re-loads every 2 minutes. The GitHub Action's saved copies in data/ are the fallback, then CBOE delayed data.
 const REPO = 'https://github.com/FlashEb/Gamma-Wall';
-// Cloudflare Worker (worker/worker.js) that fetches any ticker live from Public; leave '' to skip it.
-const WORKER_URL = 'https://gamma-wall.babayemie.workers.dev';
-let meta = { tickers: {}, order: [] }, current = (location.hash.slice(1) || 'SPY').toUpperCase(), loadedAsOf = 0;
+const WORKER_URL = 'https://gamma-wall.babayemie.workers.dev';  // '' to use only the saved copies
+const REFRESH_MS = 2 * 60 * 1000;
+const ADD_LINK = '<a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">add it to tickers.txt</a>';
+let meta = { tickers: {}, order: [] }, current = (location.hash.slice(1) || 'SPY').toUpperCase(), shownKey = '', busy = 0;
 const esc = t => String(t).replace(/[&<>"]/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;' }[c]));
 function drawButtons() {
   const list = meta.order.length ? meta.order : Object.keys(meta.tickers);
@@ -421,81 +422,85 @@ function drawButtons() {
   $('tkList').innerHTML = list.map(t => `<option value="${esc(t)}">`).join('');
 }
 async function getText(url) { const r = await fetch(url, { cache: 'no-store' }); if (!r.ok) throw new Error(r.status); return r.text(); }
-async function show(tk, force) {
+function setHash(tk) { if (location.hash.slice(1) !== tk) history.replaceState(null, '', '#' + tk); }
+// put a chain on screen; same ticker + same timestamp is skipped so a refresh doesn't reset the view for nothing
+function put(tk, text, asOf, source, msg) {
+  const key = tk + '|' + (+asOf);
+  if (key === shownKey) { $('tkMsg').innerHTML = msg; return true; }
+  const switching = !chain || chain.ticker !== tk;
+  if (switching) render.scrolled = false;
+  const before = chain;
+  ingest(text, 'Public');
+  if (chain === before) return false;  // ingest kept the old chain: the text did not parse
+  chain.ticker = tk; chain.asOf = asOf; chain.source = source; render();
+  shownKey = key; $('tkMsg').innerHTML = msg;
+  return true;
+}
+async function show(tk, quiet) {
   tk = tk.trim().toUpperCase().replace(/^\$/, '');
-  if (!/^[A-Z.^_]{1,8}$/.test(tk)) { $('tkMsg').textContent = 'That does not look like a ticker.'; return; }
-  const switching = tk !== current;
-  current = tk; if (location.hash.slice(1) !== tk) history.replaceState(null, '', '#' + tk);
-  drawButtons();
-  const m = meta.tickers[tk];
-  if (m) {
-    const asOf = new Date(m.asof);
-    if (!force && !switching && +asOf <= loadedAsOf) return;
-    try {
-      const csv = await getText('data/' + tk + '.csv?t=' + Date.now());
-      if (tk !== current) return;
-      if (switching) render.scrolled = false;
-      ingest(csv, 'Public');
-      if (chain && chain.source.startsWith('CSV')) { loadedAsOf = +asOf; chain.ticker = tk; chain.asOf = asOf; chain.source = 'Public · live'; render(); $('tkMsg').textContent = ''; }
-    } catch (e) { $('tkMsg').textContent = 'Could not load ' + tk + ' right now.'; }
-    return;
-  }
-  if (!switching && !force) return;
-  $('tkMsg').textContent = 'Looking up ' + tk + '…';
-  let workerErr = '';
+  if (!/^[A-Z.]{1,8}$/.test(tk)) { $('tkMsg').textContent = 'That does not look like a ticker.'; return; }
+  current = tk; setHash(tk); drawButtons();
+  const job = ++busy;
+  if (!quiet) $('tkMsg').textContent = 'Loading ' + tk + ' from Public…';
+  const saved = meta.tickers[tk], listed = !!saved;
+  let why = '';
   if (WORKER_URL) {
     try {
-      const r = await fetch(WORKER_URL.replace(/\/$/, '') + '/chain?ticker=' + encodeURIComponent(tk));
-      if (tk !== current) return;
-      if (r.ok) {
-        const csv = await r.text();
-        render.scrolled = false; loadedAsOf = 0;
-        ingest(csv, 'Public');
-        if (chain && chain.source.startsWith('CSV')) {
-          chain.ticker = tk; chain.asOf = new Date(r.headers.get('X-As-Of') || Date.now()); chain.source = 'Public · on demand'; render();
-          $('tkMsg').innerHTML = esc(tk) + ' was fetched just now. <a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">Add it to your list</a> to keep it refreshing.';
-          return;
-        }
-      } else if (r.status === 404) {
-        current = chain.ticker; history.replaceState(null, '', '#' + current); drawButtons();
-        $('tkMsg').textContent = 'Public has no options data for ' + tk + ' (' + (await r.text()).slice(0, 120) + ').';
-        return;
-      } else workerErr = 'live lookup failed (' + r.status + ': ' + (await r.text()).slice(0, 120) + ')';
-    } catch (e) { workerErr = 'live lookup could not reach the Worker'; }  // fall back to CBOE below
-  }
-  for (const sym of [tk, '_' + tk]) {  // indexes like SPX use an underscore at CBOE
-    try {
-      const j = await getText('https://cdn.cboe.com/api/global/delayed_quotes/options/' + sym + '.json');
-      if (tk !== current) return;
-      render.scrolled = false; loadedAsOf = 0;
-      ingest(j);
-      if (chain && chain.source === 'CBOE delayed') {
-        chain.ticker = tk; render();
-        $('tkMsg').innerHTML = esc(tk) + ' is from CBOE (15-minute delay). <a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">Add it to your list</a> to get it from Public every 30 minutes.';
+      const r = await fetch(WORKER_URL.replace(/\/$/, '') + '/chain?ticker=' + encodeURIComponent(tk), { cache: 'no-store' });
+      const body = await r.text();
+      if (job !== busy) return;
+      if (r.ok && put(tk, body, new Date(r.headers.get('X-As-Of') || Date.now()), 'Public · live',
+          listed ? '' : esc(tk) + ' loads live whenever you open it. To also keep a saved copy, ' + ADD_LINK + '.')) return;
+      if (r.status === 404 && !listed) {
+        const back = chain && chain.ticker !== 'DEMO' ? chain.ticker : 'SPY';
+        current = back; setHash(back); drawButtons();
+        $('tkMsg').textContent = 'Public has no options data for ' + tk + ' (' + body.slice(0, 120) + ').';
         return;
       }
-    } catch (e) { /* try the next form, then give up */ }
+      why = 'live lookup failed (' + r.status + ': ' + esc(body.slice(0, 120)) + ')';
+    } catch (e) { if (job !== busy) return; why = 'live lookup could not reach the Worker'; }
   }
-  current = chain.ticker; history.replaceState(null, '', '#' + current); drawButtons();  // keep showing what is on screen
-  $('tkMsg').innerHTML = (workerErr ? esc(tk) + ': ' + esc(workerErr) + '. ' : '') + esc(tk) + ' is not in your list yet. <a href="' + REPO + '/edit/main/tickers.txt" target="_blank" rel="noopener">Add it to tickers.txt</a> and it will be fetched from Public within a few minutes.';
+  if (listed) {
+    try {
+      const csv = await getText('data/' + tk + '.csv?t=' + Date.now());
+      if (job !== busy) return;
+      if (put(tk, csv, new Date(saved.asof), 'Public · saved', why ? 'Showing the saved copy: ' + why + '.' : '')) return;
+    } catch (e) { /* fall through */ }
+  }
+  for (const sym of [tk, '_' + tk]) {  // CBOE uses an underscore for indexes like SPX
+    try {
+      const j = await getText('https://cdn.cboe.com/api/global/delayed_quotes/options/' + sym + '.json');
+      if (job !== busy) return;
+      render.scrolled = false; shownKey = ''; ingest(j);
+      if (chain && chain.source === 'CBOE delayed') { chain.ticker = tk; render(); $('tkMsg').innerHTML = esc(tk) + ' is from CBOE (15-minute delay)' + (why ? '; ' + why : '') + '.'; return; }
+    } catch (e) { /* try the next form */ }
+  }
+  if (job !== busy) return;
+  const back = chain && chain.ticker !== 'DEMO' ? chain.ticker : current;
+  current = back; setHash(back); drawButtons();
+  $('tkMsg').innerHTML = esc(tk) + ': ' + (why || 'no data found') + '. You can ' + ADD_LINK + ' to have GitHub fetch it.';
 }
-async function pull() {
+async function loadMeta() {
   try {
     const m = JSON.parse(await getText('data/meta.json?t=' + Date.now()));
     if (m.asof && !m.tickers) m.tickers = { [m.ticker || 'SPY']: { asof: m.asof } };  // old single-ticker format
     meta = { tickers: m.tickers || {}, order: m.order || [] };
-  } catch (e) { /* no data yet: keep what is shown */ }
-  // a file the viewer loaded by hand stays put until they pick a ticker
-  if (chain && !chain.source.startsWith('Public') && chain.source !== 'sample' && chain.source !== 'CBOE delayed') { drawButtons(); return; }
-  if (!meta.tickers[current] && chain && chain.ticker === current && chain.source !== 'sample') { drawButtons(); return; }
-  show(current);
+  } catch (e) { /* no saved data: buttons stay empty */ }
+  drawButtons();
 }
-$('tkBtns').addEventListener('click', e => { const b = e.target.closest('button[data-tk]'); if (b) show(b.dataset.tk, true); });
-$('searchForm').addEventListener('submit', e => { e.preventDefault(); const v = $('search').value; if (v.trim()) { show(v, true); $('search').value = ''; $('search').blur(); } });
-window.addEventListener('hashchange', () => { const t = location.hash.slice(1).toUpperCase(); if (t && t !== current) show(t, true); });
+function refresh() {
+  if (document.hidden) return;
+  // a file the viewer loaded by hand stays put until they pick a ticker
+  if (chain && chain.source !== 'sample' && !chain.source.startsWith('Public') && chain.source !== 'CBOE delayed') return;
+  loadMeta().then(() => show(current, true));
+}
+$('tkBtns').addEventListener('click', e => { const b = e.target.closest('button[data-tk]'); if (b) show(b.dataset.tk); });
+$('searchForm').addEventListener('submit', e => { e.preventDefault(); const v = $('search').value; if (v.trim()) { show(v); $('search').value = ''; $('search').blur(); } });
+window.addEventListener('hashchange', () => { const t = location.hash.slice(1).toUpperCase(); if (t && t !== current) show(t); });
+document.addEventListener('visibilitychange', () => { if (!document.hidden) refresh(); });
 chain = sampleChain(); $('spot').value = chain.spot; render();
-pull().then(() => { if (chain.source === 'sample') show(current, true); });
-setInterval(pull, 5 * 60 * 1000);
+loadMeta().then(() => show(current));
+setInterval(refresh, REFRESH_MS);
 })();
 </script>
 </body></html>
