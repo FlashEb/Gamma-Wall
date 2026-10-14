@@ -1,7 +1,7 @@
 # Chain Worker
 
 Lets the Gamma Wall page look up any ticker live from Public without putting your API key in the page.
-`GET /chain?ticker=PLTR` returns the CSV the pages read (cached 2 minutes). `GET /bars?ticker=SPY&interval=1m|5m|15m` returns intraday candles from Yahoo for the Atlas chart (cached 20 seconds), and `GET /quote?ticker=SPY` returns Public's latest quote (cached 5 seconds).
+`GET /chain?ticker=PLTR` returns the CSV the pages read (cached 2 minutes). `GET /bars?ticker=SPY&interval=1m|2m|5m|15m|30m|1h|1d` returns intraday candles from Yahoo for the Atlas chart (cached 20 seconds), and `GET /quote?ticker=SPY` returns Public's latest quote (cached 5 seconds).
 
 To update an existing Worker after `worker.js` changes: open it in the dashboard → **Edit code**, replace everything with the new `worker.js`, **Deploy**. The secrets stay.
 

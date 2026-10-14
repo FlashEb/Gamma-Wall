@@ -1,6 +1,6 @@
 // Cloudflare Worker: fetches any ticker's option chain from Public and returns the CSV the Gamma Wall page reads.
 // GET /chain?ticker=PLTR  ->  symbol,strike,expiration,type,open_interest,iv,gamma,underlying_price,volume,bid,ask,last
-// GET /bars?ticker=SPY&interval=1m|5m|15m  ->  {t:[unix s], o, h, l, c, v} intraday candles (Yahoo chart data; Public has no bars)
+// GET /bars?ticker=SPY&interval=1m|2m|5m|15m|30m|1h|1d  ->  {t:[unix s], o, h, l, c, v} intraday candles (Yahoo chart data; Public has no bars)
 // GET /quote?ticker=SPY  ->  {last, bid, ask, time}
 // Needs secrets PUBLIC_API_SECRET and PUBLIC_ACCOUNT_ID (Settings -> Variables and Secrets).
 const BASE = 'https://api.public.com';
@@ -83,10 +83,10 @@ async function quoteJson(tk, env) {
   return JSON.stringify({ last: num(x.last), bid: num(x.bid), ask: num(x.ask), time: x.lastTimestamp || null });
 }
 
-const RANGES = { '1m': '2d', '5m': '5d', '15m': '5d' };
+const RANGES = { '1m': '5d', '2m': '5d', '5m': '1mo', '15m': '1mo', '30m': '1mo', '1h': '3mo', '1d': '1y' };
 async function barsJson(tk, interval) {
   const range = RANGES[interval];
-  if (!range) throw new HttpError(400, 'interval must be 1m, 5m or 15m');
+  if (!range) throw new HttpError(400, 'interval must be one of ' + Object.keys(RANGES).join(', '));
   let last;
   for (const host of ['query1', 'query2']) {
     const r = await fetch(`https://${host}.finance.yahoo.com/v8/finance/chart/${encodeURIComponent(tk)}?interval=${interval}&range=${range}&includePrePost=false`,

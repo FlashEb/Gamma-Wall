@@ -54,6 +54,13 @@ button:hover { border-color: var(--spot); }
 .chip.king .v { color: var(--gold); text-shadow: 0 0 12px rgba(255, 200, 60, .55); }
 .pos { color: var(--pos); } .neg { color: var(--neg); }
 .chartbox { position: relative; background: #0a0c11; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; touch-action: none; }
+.chartbox.expanded { position: fixed; inset: 0; z-index: 50; border-radius: 0; border: 0; }
+.tools { position: absolute; top: 6px; right: 74px; display: flex; gap: 4px; }
+.tools button { background: rgba(22, 25, 34, .9); padding: 3px 9px; min-width: 30px; }
+.tools { flex-wrap: wrap; justify-content: flex-end; left: 8px; pointer-events: none; }
+.tools > * { pointer-events: auto; }
+.tools .seg button { padding: 3px 7px; min-width: 0; }
+#ivSeg button { padding: 5px 9px; }
 canvas { display: block; width: 100%; }
 .legend { display: flex; flex-wrap: wrap; gap: 6px 16px; font-size: .75rem; color: var(--muted); align-items: center; }
 .dot { display: inline-block; width: 9px; height: 9px; border-radius: 50%; margin-right: 5px; vertical-align: -1px; }
@@ -94,7 +101,7 @@ td.ASK { color: var(--pos); } td.BID { color: var(--neg); } td.MID { color: var(
 
   <div class="bar">
     <span><span class="lbl">Candles</span><span class="seg" id="ivSeg">
-      <button data-v="1m" class="on">1m</button><button data-v="3m">3m</button><button data-v="5m">5m</button><button data-v="15m">15m</button></span></span>
+      <button data-v="1m" class="on">1m</button><button data-v="2m">2m</button><button data-v="3m">3m</button><button data-v="5m">5m</button><button data-v="10m">10m</button><button data-v="15m">15m</button><button data-v="30m">30m</button><button data-v="1h">1H</button><button data-v="4h">4H</button><button data-v="1d">1D</button></span></span>
     <span><span class="lbl">Levels</span><span class="seg" id="modeSeg">
       <button data-v="gex" class="on">GEX</button><button data-v="vex">VEX</button><button data-v="both">GEX+VEX</button></span></span>
     <span><span class="lbl">Expirations</span><span class="seg" id="expSeg">
@@ -102,11 +109,18 @@ td.ASK { color: var(--pos); } td.BID { color: var(--neg); } td.MID { color: var(
   </div>
 
   <div class="chips" id="chips"></div>
-  <div class="chartbox" id="chartbox"><canvas id="cv"></canvas></div>
+  <div class="chartbox" id="chartbox"><canvas id="cv"></canvas>
+    <div class="tools">
+      <button type="button" id="zOut" title="Zoom out" aria-label="Zoom out">−</button>
+      <button type="button" id="zIn" title="Zoom in" aria-label="Zoom in">+</button>
+      <button type="button" id="zFit" title="Fit to data (double-click)">Fit</button>
+      <button type="button" id="zExp" title="Expand (Esc to close)" aria-label="Expand chart">⤢</button>
+    </div>
+  </div>
   <div class="legend">
     <span><span class="dot" style="background:var(--gold)"></span>Positive (dealers long gamma, price tends to pin)</span>
     <span><span class="dot" style="background:var(--violet)"></span>Negative (dealers short gamma, moves tend to extend)</span>
-    <span>Bigger, brighter orbs are stronger strikes. Scroll to zoom, drag to pan, double-click to reset.</span>
+    <span>Bigger, brighter orbs are stronger strikes. Scroll or pinch to zoom, drag to pan, drag the price axis to stretch prices, ⤢ to expand, double-click or Fit to reset.</span>
   </div>
 
   <section class="flow">
@@ -149,6 +163,8 @@ let meta = { tickers: {}, order: [] }, job = 0;
 // ---------- dates (US/Eastern) ----------
 const etDate = d => new Date(d).toLocaleDateString('en-CA', { timeZone: 'America/New_York' });  // YYYY-MM-DD
 const etTime = s => new Date(s * 1000).toLocaleTimeString('en-US', { timeZone: 'America/New_York', hour: '2-digit', minute: '2-digit', hour12: false });
+const etMD = s => new Date(s * 1000).toLocaleDateString('en-US', { timeZone: 'America/New_York', month: '2-digit', day: '2-digit' });
+const tlabel = (s, full) => IV_SEC[st.iv] >= 86400 ? etMD(s) : IV_SEC[st.iv] >= 3600 || full ? etMD(s) + ' ' + etTime(s) : etTime(s);
 const ymd = s => { const [y, m, d] = s.split('-').map(Number); return Date.UTC(y, m - 1, d); };
 const iso = ms => new Date(ms).toISOString().slice(0, 10);
 function windowEnd(kind, exps) {
@@ -245,11 +261,23 @@ function computeLevels() {
 }
 
 // ---------- candles ----------
-const IV_SEC = { '1m': 60, '3m': 180, '5m': 300, '15m': 900 };
+const IV_SEC = { '1m': 60, '2m': 120, '3m': 180, '5m': 300, '10m': 600, '15m': 900, '30m': 1800, '1h': 3600, '4h': 14400, '1d': 86400 };
+// Worker intervals to try for each timeframe, best first; the last one also works on the original Worker
+const SRC = { '1m': ['1m'], '2m': ['2m', '1m'], '3m': ['1m'], '5m': ['5m'], '10m': ['5m'], '15m': ['15m'], '30m': ['30m', '15m'],
+              '1h': ['1h', '15m'], '4h': ['1h', '15m'], '1d': ['1d', '15m'] };
+const SRC_SEC = { '1m': 60, '2m': 120, '5m': 300, '15m': 900, '30m': 1800, '1h': 3600, '1d': 86400 };
+// session-anchored buckets: intraday candles start at 9:30 ET, daily candles are one per ET date
+const etParts = new Intl.DateTimeFormat('en-US', { timeZone: 'America/New_York', hour12: false, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+function sessionOpen(t) {
+  const p = Object.fromEntries(etParts.formatToParts(new Date(t * 1000)).map(x => [x.type, x.value]));
+  const mins = (+p.hour % 24) * 60 + +p.minute;
+  return t - (t % 60) - (mins - 570) * 60;  // 9:30 ET on that bar's date
+}
 function aggregate(bars, sec) {
   const out = [];
   for (const b of bars) {
-    const t = Math.floor(b.t / sec) * sec, last = out[out.length - 1];
+    const open = sessionOpen(b.t);
+    const t = sec >= 86400 ? open : open + Math.floor((b.t - open) / sec) * sec, last = out[out.length - 1];
     if (last && last.t === t) { last.h = Math.max(last.h, b.h); last.l = Math.min(last.l, b.l); last.c = b.c; last.v += b.v; }
     else out.push({ ...b, t });
   }
@@ -263,7 +291,8 @@ function ticksToBars() {
 // ---------- drawing ----------
 const cv = $('cv'), ctx = cv.getContext('2d'), AXIS = 66, TAXIS = 22;
 function size() {
-  const w = $('chartbox').clientWidth, h = Math.max(340, Math.min(640, Math.round(window.innerHeight * 0.62)));
+  const box = $('chartbox'), w = box.clientWidth;
+  const h = box.classList.contains('expanded') ? box.clientHeight : Math.max(340, Math.min(640, Math.round(window.innerHeight * 0.62)));
   const dpr = window.devicePixelRatio || 1;
   cv.width = w * dpr; cv.height = h * dpr; cv.style.height = h + 'px';
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -292,6 +321,7 @@ function draw() {
   let lo = vis.length ? Math.min(...vis.map(b => b.l)) : S * 0.99, hi = vis.length ? Math.max(...vis.map(b => b.h)) : S * 1.01;
   if (L && L.king && Math.abs(L.king.k - S) / S < 0.02) { lo = Math.min(lo, L.king.k); hi = Math.max(hi, L.king.k); }
   const pad = Math.max((hi - lo) * 0.12, S * (vis.length < 10 ? 0.004 : 0.0015)); lo -= pad; hi += pad;
+  if (st.yz) { const mid = (lo + hi) / 2 + st.yz.shift * (hi - lo), half = (hi - lo) / 2 * st.yz.scale; lo = mid - half; hi = mid + half; }
   const Y = p => ph - (p - lo) / (hi - lo) * ph, P = y => lo + (ph - y) / ph * (hi - lo);
   st.geom = { pw, ph, bw, x0, X, Y, P, lo, hi };
 
@@ -368,7 +398,7 @@ function draw() {
   ctx.fillStyle = '#0a0c11'; ctx.fillRect(0, ph, w, TAXIS);
   ctx.strokeStyle = '#262a37'; ctx.beginPath(); ctx.moveTo(0, ph + 0.5); ctx.lineTo(w, ph + 0.5); ctx.moveTo(pw + 0.5, 0); ctx.lineTo(pw + 0.5, h); ctx.stroke();
   ctx.font = '10px JetBrains Mono, monospace'; ctx.fillStyle = '#6c7287';
-  const every = Math.max(1, Math.ceil(70 / bw));
+  const every = Math.max(1, Math.ceil((IV_SEC[st.iv] >= 3600 && IV_SEC[st.iv] < 86400 ? 100 : 70) / bw));
   let lastDay = null;
   for (let i = Math.max(0, Math.floor(x0)); i <= Math.min(n - 1, Math.floor(v.end)); i++) {
     const day = etDate(bars[i].t * 1000);
@@ -377,7 +407,7 @@ function draw() {
       ctx.strokeStyle = '#262a37'; ctx.setLineDash([3, 3]); ctx.beginPath(); ctx.moveTo(x, 0); ctx.lineTo(x, ph); ctx.stroke(); ctx.setLineDash([]);
     }
     lastDay = day;
-    if (i % every === 0) ctx.fillText(etTime(bars[i].t), X(i) - 16, ph + 12);
+    if (i % every === 0) ctx.fillText(tlabel(bars[i].t), X(i) - 16, ph + 12);
   }
 
   // crosshair
@@ -389,7 +419,7 @@ function draw() {
     ctx.fillStyle = '#2a3150'; ctx.fillRect(pw, hv.y - 9, AXIS, 18);
     ctx.fillStyle = '#fff'; ctx.font = '11px JetBrains Mono, monospace'; ctx.fillText(price.toFixed(2), pw + 6, hv.y);
     const i = Math.round(hv.x / bw - 0.5 + x0), b = bars[i];
-    let txt = b ? `${etTime(b.t)}  O ${b.o.toFixed(2)}  H ${b.h.toFixed(2)}  L ${b.l.toFixed(2)}  C ${b.c.toFixed(2)}` : '';
+    let txt = b ? `${tlabel(b.t, true)}  O ${b.o.toFixed(2)}  H ${b.h.toFixed(2)}  L ${b.l.toFixed(2)}  C ${b.c.toFixed(2)}` : '';
     if (L) {
       const near = L.all.reduce((a, x) => !a || Math.abs(x.k - price) < Math.abs(a.k - price) ? x : a, null);
       if (near) txt += `   ${fmtK(near.k)}: GEX ${fmt$(near.gex)} · VEX ${fmt$(near.vex)}`;
@@ -493,14 +523,18 @@ function setChain(c, asOf, source) {
 }
 
 async function loadBars() {
-  const tk = st.tk, my = job, src = st.iv === '3m' ? '1m' : st.iv;
+  const tk = st.tk, my = job, iv = st.iv;
   if (st.priceSrc !== 'quotes') {
     try {
-      const { text } = await get(W(`/bars?ticker=${encodeURIComponent(tk)}&interval=${src}`));
+      let text, src;
+      for (src of SRC[iv].filter(x => !(loadBars.unsupported || new Set()).has(x))) {
+        try { ({ text } = await get(W(`/bars?ticker=${encodeURIComponent(tk)}&interval=${src}`))); break; }
+        catch (e) { if (e.status !== 400 || src === SRC[iv][SRC[iv].length - 1]) throw e; (loadBars.unsupported ||= new Set()).add(src); }
+      }
       if (my !== job) return;
       const j = JSON.parse(text);
       let bars = j.t.map((t, i) => ({ t, o: j.o[i], h: j.h[i], l: j.l[i], c: j.c[i], v: j.v[i] }));
-      if (st.iv === '3m') bars = aggregate(bars, 180);
+      if (IV_SEC[iv] !== SRC_SEC[src]) bars = aggregate(bars, IV_SEC[iv]);
       const grew = bars.length - st.bars.length;
       st.bars = bars; st.priceSrc = 'bars';
       if (st.view && grew > 0 && st.view.end >= bars.length - grew - 1) st.view.end += grew;  // follow new candles when at the right edge
@@ -536,7 +570,7 @@ async function pollQuote() {
 function show(tk) {
   tk = tk.trim().toUpperCase().replace(/^\$/, '');
   if (!/^[A-Z.]{1,8}$/.test(tk)) { $('msg').textContent = 'That does not look like a ticker.'; return; }
-  job++; st.tk = tk; st.chain = null; st.levels = null; st.bars = []; st.ticks = []; st.view = null; st.priceSrc = '';
+  job++; st.tk = tk; st.chain = null; st.levels = null; st.bars = []; st.ticks = []; st.view = null; st.yz = null; st.priceSrc = '';
   st.snaps.clear(); st.prints = [];
   if (location.hash.slice(1) !== tk) history.replaceState(null, '', '#' + tk);
   $('tkr').textContent = tk; $('wallLink').href = 'index.html#' + tk; document.title = 'Gamma Atlas ' + tk;
@@ -558,7 +592,7 @@ function seg(id, key, after) {
     st[key] = b.dataset.v; after();
   });
 }
-seg('ivSeg', 'iv', () => { job++; st.bars = []; st.view = null; if (st.priceSrc === 'quotes') { st.bars = ticksToBars(); update(true); } else { st.priceSrc = ''; loadBars(); } });
+seg('ivSeg', 'iv', () => { job++; st.bars = []; st.view = null; st.yz = null; if (st.priceSrc === 'quotes') { st.bars = ticksToBars(); update(true); } else { st.priceSrc = ''; loadBars(); } });
 seg('modeSeg', 'mode', () => update());
 seg('expSeg', 'exp', () => update());
 seg('flowSeg', 'flowView', flow);
@@ -568,23 +602,83 @@ $('searchForm').addEventListener('submit', e => { e.preventDefault(); const v = 
 window.addEventListener('hashchange', () => { const t = location.hash.slice(1).toUpperCase(); if (t && t !== st.tk) show(t); });
 window.addEventListener('resize', () => draw());
 
-let drag = null;
-cv.addEventListener('pointerdown', e => { if (!st.view) return; drag = { x: e.clientX, end: st.view.end }; cv.setPointerCapture(e.pointerId); });
+// pan: drag (vertical drag moves the price scale); zoom: wheel / trackpad pinch / two-finger pinch / buttons,
+// drag up and down on the price axis to stretch prices; double-click or Fit resets
+const ptrs = new Map();
+let drag = null, pinch = null;
+function zoomAt(factor, mx) {
+  const g = st.geom, v = st.view; if (!g || !v) return;
+  if (mx == null) mx = g.pw;
+  const i = mx / g.bw + g.x0 - 0.5;
+  v.count = Math.max(15, Math.min(Math.max(st.bars.length + 20, 15), v.count * factor));
+  const x0 = i - mx / (g.pw / v.count) + 0.5;
+  v.end = x0 + v.count - 1;
+  draw();
+}
+const local = e => { const rc = cv.getBoundingClientRect(); return { x: e.clientX - rc.left, y: e.clientY - rc.top }; };
+cv.addEventListener('pointerdown', e => {
+  if (!st.view || !st.geom) return;
+  cv.setPointerCapture(e.pointerId); ptrs.set(e.pointerId, local(e));
+  if (ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()];
+    pinch = { d: Math.abs(a.x - b.x) || 1, count: st.view.count, mx: (a.x + b.x) / 2 }; drag = null;
+  } else {
+    const p = local(e);
+    drag = { x: p.x, y: p.y, end: st.view.end, yz: { ...(st.yz || { scale: 1, shift: 0 }) }, axis: p.x > st.geom.pw };
+  }
+});
 cv.addEventListener('pointermove', e => {
-  const rc = cv.getBoundingClientRect();
-  st.hover = { x: e.clientX - rc.left, y: e.clientY - rc.top };
-  if (drag && st.geom) st.view.end = drag.end - (e.clientX - drag.x) / st.geom.bw;
+  const p = local(e);
+  if (ptrs.has(e.pointerId)) ptrs.set(e.pointerId, p);
+  st.hover = e.pointerType === 'mouse' || ptrs.size === 1 ? p : null;
+  const g = st.geom;
+  if (pinch && ptrs.size === 2) {
+    const [a, b] = [...ptrs.values()], d = Math.abs(a.x - b.x) || 1;
+    st.view.count = pinch.count; zoomAt(pinch.d / d, pinch.mx); return;
+  }
+  if (drag && g) {
+    if (drag.axis) st.yz = { scale: Math.max(0.05, Math.min(20, drag.yz.scale * Math.exp((p.y - drag.y) / 150))), shift: drag.yz.shift };
+    else {
+      st.view.end = drag.end - (p.x - drag.x) / g.bw;
+      const dy = (p.y - drag.y) / g.ph;
+      if (Math.abs(p.y - drag.y) > 6 || st.yz) st.yz = { scale: drag.yz.scale, shift: drag.yz.shift + dy * drag.yz.scale };
+    }
+  }
   draw();
 });
-cv.addEventListener('pointerup', () => { drag = null; });
-cv.addEventListener('pointerleave', () => { st.hover = null; drag = null; draw(); });
+const up = e => { ptrs.delete(e.pointerId); if (ptrs.size < 2) pinch = null; if (!ptrs.size) drag = null; };
+cv.addEventListener('pointerup', up);
+cv.addEventListener('pointercancel', up);
+cv.addEventListener('pointerleave', e => { if (e.pointerType === 'mouse') { st.hover = null; draw(); } });
 cv.addEventListener('wheel', e => {
   if (!st.view) return; e.preventDefault();
-  const right = st.view.end;
-  st.view.count *= Math.pow(1.0015, e.deltaY);
-  st.view.end = right; draw();
+  const p = local(e);
+  if (st.geom && p.x > st.geom.pw) { st.yz = { scale: Math.max(0.05, Math.min(20, (st.yz ? st.yz.scale : 1) * Math.pow(1.002, e.deltaY))), shift: st.yz ? st.yz.shift : 0 }; draw(); return; }
+  if (!e.ctrlKey && Math.abs(e.deltaX) > Math.abs(e.deltaY)) { st.view.end += e.deltaX / st.geom.bw; draw(); return; }  // trackpad swipe pans
+  zoomAt(Math.pow(e.ctrlKey ? 1.01 : 1.0015, e.deltaY), p.x);
 }, { passive: false });
-cv.addEventListener('dblclick', () => { st.view = null; draw(); });
+const fit = () => { st.view = null; st.yz = null; draw(); };
+cv.addEventListener('dblclick', fit);
+$('zIn').addEventListener('click', () => zoomAt(1 / 1.4));
+$('zOut').addEventListener('click', () => zoomAt(1.4));
+$('zFit').addEventListener('click', fit);
+function expand(on) {
+  $('chartbox').classList.toggle('expanded', on);
+  // keep the timeframe buttons reachable while the chart fills the screen
+  const segEl = $('ivSeg');
+  if (on) $('chartbox').querySelector('.tools').prepend(segEl); else expand.home.appendChild(segEl);
+  $('zExp').textContent = on ? '✕' : '⤢'; $('zExp').setAttribute('aria-label', on ? 'Close expanded chart' : 'Expand chart');
+  document.body.style.overflow = on ? 'hidden' : '';
+  draw();
+}
+expand.home = $('ivSeg').parentNode;
+$('zExp').addEventListener('click', () => expand(!$('chartbox').classList.contains('expanded')));
+document.addEventListener('keydown', e => {
+  if (e.target.closest && e.target.closest('input,select')) return;
+  if (e.key === 'Escape' && $('chartbox').classList.contains('expanded')) expand(false);
+  else if (e.key === '+' || e.key === '=') zoomAt(1 / 1.4);
+  else if (e.key === '-') zoomAt(1.4);
+});
 
 (async () => {
   try { const { text } = await get('data/meta.json?t=' + Date.now()); const m = JSON.parse(text); meta = { tickers: m.tickers || {}, order: m.order || [] }; } catch (e) { /* no saved list */ }
