@@ -9,7 +9,8 @@ if os.environ.get("FORCE") != "1" and (now.weekday() > 4 or not (9 * 60 + 25 <= 
     sys.exit(print(f"Outside market hours ({now:%a %H:%M} ET), skipping") or 0)
 
 tickers = [t.strip().upper() for t in open("tickers.txt") if t.strip() and not t.startswith("#")]
-os.makedirs("data", exist_ok=True)
+os.makedirs("data/open", exist_ok=True)
+after_open = now.hour * 60 + now.minute >= 9 * 60 + 30
 try:
     meta = json.load(open("data/meta.json"))
 except (OSError, ValueError):
@@ -27,9 +28,17 @@ for tk in tickers:
         continue
     shutil.copy(files[-1], f"data/{tk}.csv")
     rows = list(csv.DictReader(open(files[-1])))
-    meta["tickers"][tk] = {"asof": datetime.now(timezone.utc).isoformat(timespec="seconds"),
-                           "spot": float(rows[0]["underlying_price"]) if rows and rows[0]["underlying_price"] else None,
-                           "contracts": len(rows)}
+    prev = meta["tickers"].get(tk, {})
+    info = {"asof": datetime.now(timezone.utc).isoformat(timespec="seconds"),
+            "spot": float(rows[0]["underlying_price"]) if rows and rows[0]["underlying_price"] else None,
+            "contracts": len(rows)}
+    # first run after the open keeps a copy for the page's "change since open" view
+    if after_open and prev.get("open_date") != now.date().isoformat():
+        shutil.copy(files[-1], f"data/open/{tk}.csv")
+        info.update(open_date=now.date().isoformat(), open_asof=info["asof"])
+    else:
+        info.update({k: prev[k] for k in ("open_date", "open_asof") if k in prev})
+    meta["tickers"][tk] = info
 
 meta["order"] = tickers
 meta["updated"] = datetime.now(timezone.utc).isoformat(timespec="seconds")

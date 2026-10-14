@@ -64,6 +64,7 @@ td.tot { border-left: 2px solid var(--line); font-weight: 600; }
 tr.spot th { color: var(--spot); box-shadow: inset 3px 0 0 var(--spot); }
 tr.spot th, tr.spot td { border-top: 1px solid var(--spot); border-bottom: 1px solid var(--spot); }
 td.sel { outline: 1px solid #fff; outline-offset: -1px; }
+td.king { outline: 2px solid #ffc83c; outline-offset: -2px; box-shadow: inset 0 0 14px rgba(255, 200, 60, .45); font-weight: 700; }
 .empty { padding: 40px 16px; text-align: center; color: var(--muted); }
 .legend { display: flex; gap: 8px; align-items: center; font-size: .75rem; color: var(--muted); flex-wrap: wrap; }
 .ramp { width: 160px; height: 10px; border-radius: 3px; background: linear-gradient(90deg, var(--neg), var(--cell) 50%, var(--pos)); border: 1px solid var(--line); }
@@ -79,6 +80,11 @@ code { font-family: var(--mono); font-size: .82em; background: var(--bg); paddin
 .tickers input[type=search] { width: 10em; text-transform: uppercase; }
 .tickers .msg { flex-basis: 100%; font-size: .8rem; color: var(--muted); }
 .tickers .msg a { color: var(--spot); }
+.views { display: flex; flex-wrap: wrap; gap: 8px 14px; align-items: center; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 999px; overflow: hidden; background: var(--panel); }
+.seg button { border: 0; border-radius: 999px; background: transparent; padding: 6px 14px; }
+.seg button.on { background: #2a3150; color: #fff; font-weight: 600; }
+.chip.king .v { color: #ffc83c; text-shadow: 0 0 12px rgba(255, 200, 60, .45); }
 
 </style>
 
@@ -101,12 +107,18 @@ code { font-family: var(--mono); font-size: .82em; background: var(--bg); paddin
     <div class="msg" id="tkMsg"></div>
   </div>
 
+  <div class="views">
+    <span class="seg" id="greekSeg"><button data-v="gex" class="on">GEX</button><button data-v="vex">VEX</button><button data-v="dex">DEX</button><button data-v="charm">Charm</button></span>
+    <span class="seg" id="expSeg"><button data-v="all" class="on">All exp</button><button data-v="0dte">0DTE</button></span>
+    <span class="seg" id="viewSeg"><button data-v="value" class="on">Value</button><button data-v="delta">Δ since open</button></span>
+  </div>
+
   <div class="controls">
     <div class="ctl"><label for="spot">Spot price</label><input id="spot" type="number" step="0.01"></div>
     <div class="ctl"><label for="range">Strike range ±%</label><input id="range" type="number" min="1" max="100" value="8"></div>
     <div class="ctl"><label for="maxExp">Expiries shown</label><input id="maxExp" type="number" min="1" max="60" value="13"></div>
     <div class="ctl"><label for="metric">Show</label>
-      <select id="metric"><option value="net">Net GEX (calls − puts)</option><option value="call">Call GEX</option><option value="put">Put GEX</option></select></div>
+      <select id="metric"><option value="net">Net (calls + puts)</option><option value="call">Calls only</option><option value="put">Puts only</option></select></div>
     <div class="ctl"><label for="scale">Color scale</label>
       <select id="scale"><option value="col">Per expiry</option><option value="all">Whole grid</option></select></div>
     <div class="drop">
@@ -118,7 +130,7 @@ code { font-family: var(--mono); font-size: .82em; background: var(--bg); paddin
   </div>
 
   <div class="chips" id="chips"></div>
-  <div class="legend"><span class="neg">−</span><span class="ramp"></span><span class="pos">+</span><span>Dollar gamma per 1% move. Dealers assumed long calls / short puts. Click a cell for detail.</span></div>
+  <div class="legend"><span class="neg">−</span><span class="ramp"></span><span class="pos">+</span><span id="legendText"></span></div>
   <div class="detail" id="detail"></div>
   <div class="gridbox" id="gridbox"></div>
 
@@ -146,6 +158,31 @@ function bsGamma(S, K, T, iv, r = 0.04) {
   T = Math.max(T, 0.5 / 365);
   const d1 = (Math.log(S / K) + (r + iv * iv / 2) * T) / (iv * Math.sqrt(T));
   return npdf(d1) / (S * iv * Math.sqrt(T));
+}
+function ncdf(x) {  // Abramowitz-Stegun normal CDF
+  const t = 1 / (1 + 0.2316419 * Math.abs(x));
+  const p = npdf(x) * t * (0.31938153 + t * (-0.356563782 + t * (1.781477937 + t * (-1.821255978 + t * 1.330274429))));
+  return x >= 0 ? 1 - p : p;
+}
+// per-contract exposure in dollars; calls count positive and puts negative (dealers long calls / short puts),
+// except DEX, which is the plain dollar delta of the open interest (put delta is already negative)
+const GREEKS = {
+  gex: { name: 'GEX', note: 'Dollar gamma per 1% move. Dealers assumed long calls / short puts.' },
+  vex: { name: 'VEX', note: 'Vanna: dollar delta change per 1 vol point. Dealers assumed long calls / short puts.' },
+  dex: { name: 'DEX', note: 'Dollar delta of open interest (calls +, puts −).' },
+  charm: { name: 'Charm', note: 'Dollar delta change per day from time decay. Dealers assumed long calls / short puts.' },
+};
+function exposure(r, S, greek, fileSpot, rate = 0.04) {
+  const sign = r.type === 'C' ? 1 : -1, iv = r.iv || 0.3, T = Math.max(r.dte, 0.5) / 365;
+  if (greek === 'gex') {
+    const g = (r.gamma != null && Math.abs(S - fileSpot) < 1e-9) ? r.gamma : bsGamma(S, r.k, r.dte / 365, iv);
+    return sign * g * r.oi * 100 * S * S * 0.01;
+  }
+  const sq = iv * Math.sqrt(T), d1 = (Math.log(S / r.k) + (rate + iv * iv / 2) * T) / sq, d2 = d1 - sq;
+  if (greek === 'vex') return sign * (-npdf(d1) * d2 / iv) * r.oi * 100 * S * 0.01;
+  if (greek === 'dex') return (r.type === 'C' ? ncdf(d1) : ncdf(d1) - 1) * r.oi * 100 * S;
+  const charm = -npdf(d1) * (2 * rate * T - d2 * sq) / (2 * T * sq) / 365;
+  return sign * charm * r.oi * 100 * S;
 }
 function fmt$(v) {
   if (v == null) return '';
@@ -274,29 +311,47 @@ function ingest(text, name = '') {
 }
 
 // ---------- compute + render ----------
+let greek = 'gex', expMode = 'all', view = 'value', openChain = null;  // openChain: {tk, rows, spot, asOf, label}
+function cellsFor(rows, S, fileSpot, dteSet, lo, hi, gk = greek) {
+  const cells = new Map(), byStrike = new Map();
+  for (const r of rows) {
+    if (!dteSet.has(r.dte)) continue;
+    const v = exposure(r, S, gk, fileSpot);
+    byStrike.set(r.k, (byStrike.get(r.k) || 0) + v);
+    if (r.k < lo || r.k > hi) continue;
+    const key = r.k + '|' + r.dte;
+    const c = cells.get(key) || { call: 0, put: 0, coi: 0, poi: 0, exp: r.exp };
+    if (r.type === 'C') { c.call += v; c.coi += r.oi; } else { c.put += v; c.poi += r.oi; }
+    cells.set(key, c);
+  }
+  return { cells, byStrike };
+}
 function compute() {
   const S = +$('spot').value || chain.spot;
   const range = (+$('range').value || 8) / 100;
   const maxExp = Math.max(1, +$('maxExp').value || 13);
   const lo = S * (1 - range), hi = S * (1 + range);
-  const dtes = [...new Set(chain.rows.map(r => r.dte))].sort((a, b) => a - b).slice(0, maxExp);
+  const all = [...new Set(chain.rows.map(r => r.dte))].sort((a, b) => a - b);
+  const dtes = expMode === '0dte' ? all.slice(0, 1) : all.slice(0, maxExp);
   const dteSet = new Set(dtes);
-  const cells = new Map(); // `${k}|${dte}` -> {call, put, coi, poi}
-  const strikeTot = new Map(); const allStrike = new Map();
-  for (const r of chain.rows) {
-    const T = r.dte / 365;
-    // gamma from the file is at the file's spot; recompute when spot is overridden or gamma missing
-    const g = (r.gamma != null && Math.abs(S - chain.spot) < 1e-9) ? r.gamma : bsGamma(S, r.k, T, r.iv || 0.3);
-    const gex = g * r.oi * 100 * S * S * 0.01 * (r.type === 'C' ? 1 : -1);
-    allStrike.set(r.k, (allStrike.get(r.k) || 0) + gex);
-    if (!dteSet.has(r.dte) || r.k < lo || r.k > hi) continue;
-    const key = r.k + '|' + r.dte;
-    const c = cells.get(key) || { call: 0, put: 0, coi: 0, poi: 0, exp: r.exp };
-    if (r.type === 'C') { c.call += gex; c.coi += r.oi; } else { c.put += gex; c.poi += r.oi; }
-    cells.set(key, c);
+  let { cells, byStrike } = cellsFor(chain.rows, S, chain.spot, dteSet, lo, hi);
+  let delta = null;
+  if (view === 'delta') {
+    if (openChain && openChain.tk === chain.ticker) {
+      // change since open: today's value minus the value in the at-the-open snapshot, each at its own spot
+      const then = cellsFor(openChain.rows, openChain.spot, openChain.spot, dteSet, lo, hi);
+      for (const [key, c] of then.cells) {
+        const n = cells.get(key) || { call: 0, put: 0, coi: 0, poi: 0, exp: c.exp };
+        n.call -= c.call; n.put -= c.put; cells.set(key, n);
+      }
+      for (const [k, v] of then.byStrike) byStrike.set(k, (byStrike.get(k) || 0) - v);
+      delta = openChain.label;
+    } else delta = '';
   }
   const strikes = [...new Set([...cells.keys()].map(k => +k.split('|')[0]))].sort((a, b) => b - a);
-  return { S, dtes, cells, strikes, allStrike };
+  // walls always come from current GEX over the shown expiries
+  const gexStrike = cellsFor(chain.rows, S, chain.spot, dteSet, lo, hi, 'gex').byStrike;
+  return { S, dtes, cells, strikes, byStrike, gexStrike, delta, dteSet };
 }
 function val(c, metric) { return !c ? null : metric === 'call' ? c.call : metric === 'put' ? c.put : c.call + c.put; }
 function shade(v, max) {
@@ -308,24 +363,35 @@ function shade(v, max) {
 }
 function render() {
   const metric = $('metric').value, scale = $('scale').value;
-  const { S, dtes, cells, strikes, allStrike } = compute();
+  const { S, dtes, cells, strikes, byStrike, gexStrike, delta, dteSet } = compute();
   $('tkr').textContent = chain.ticker;
   const badge = $('srcBadge'); badge.textContent = chain.source === 'sample' ? 'Sample data' : chain.source; badge.classList.toggle('sample', chain.source === 'sample');
   $('asof').textContent = (chain.source === 'sample' ? 'Synthetic chain, not market data · ' : 'As of ' + chain.asOf.toLocaleString() + ' · ') + chain.rows.length.toLocaleString() + ' contracts';
+  const G = GREEKS[greek];
+  $('legendText').textContent = (view === 'delta' ? 'Change since ' + (delta || 'open') + ' in ' : '') + G.note + ' Click a cell for detail.';
 
-  // summary chips (all expiries, all strikes)
-  const entries = [...allStrike.entries()];
-  const net = entries.reduce((s, [, v]) => s + v, 0);
-  const callWall = entries.reduce((b, e) => e[1] > b[1] ? e : b, [0, -Infinity]);
-  const putWall = entries.reduce((b, e) => e[1] < b[1] ? e : b, [0, Infinity]);
-  const flip = gammaFlip(S);
+  // summary chips over the shown expiries
+  const gEntries = [...gexStrike.entries()];
+  const callWall = gEntries.reduce((b, e) => e[1] > b[1] ? e : b, [0, -Infinity]);
+  const putWall = gEntries.reduce((b, e) => e[1] < b[1] ? e : b, [0, Infinity]);
+  const flip = gammaFlip(S, dteSet);
+  let king = null;  // the single biggest cell for the chosen greek and view
+  for (const [key, c] of cells) { const v = val(c, metric); if (v != null && (!king || Math.abs(v) > Math.abs(king.v))) king = { key, v, exp: c.exp }; }
+  const net = [...byStrike.values()].reduce((a, v) => a + v, 0);
+  const expNote = expMode === '0dte' ? (dtes[0] === 0 ? '0DTE' : 'nearest expiry (' + dtes[0] + 'd)') : 'shown expiries';
+  const md = d => d.toLocaleDateString(undefined, { month: '2-digit', day: '2-digit' });
   $('chips').innerHTML = [
     ['Spot', '$' + S.toFixed(2), '', ''],
-    ['Net GEX', fmt$(net), net >= 0 ? 'pos' : 'neg', net >= 0 ? 'Dealers long gamma' : 'Dealers short gamma'],
-    ['Call wall', fmtK(callWall[0]), 'pos', fmt$(callWall[1]) + ' all expiries'],
-    ['Put wall', fmtK(putWall[0]), 'neg', fmt$(putWall[1]) + ' all expiries'],
-    ['Gamma flip', flip ? '$' + flip.toFixed(2) : 'n/a', '', flip ? (S > flip ? 'Spot above flip' : 'Spot below flip') : 'No sign change ±20%'],
-  ].map(([k, v, cls, n]) => `<div class="chip"><span class="k">${k}</span><span class="v ${cls}">${v}</span><span class="n">${n || '&nbsp;'}</span></div>`).join('');
+    ['Call wall', callWall[1] > 0 ? fmtK(callWall[0]) : 'n/a', 'pos', callWall[1] > 0 ? fmt$(callWall[1]) + ' GEX' : ''],
+    ['Put wall', putWall[1] < 0 ? fmtK(putWall[0]) : 'n/a', 'neg', putWall[1] < 0 ? fmt$(putWall[1]) + ' GEX' : ''],
+    ['Zero Γ', flip ? '$' + flip.toFixed(2) : 'n/a', '', flip ? (S > flip ? 'Spot above' : 'Spot below') : 'No sign change ±20%'],
+    ['King', king ? fmtK(+king.key.split('|')[0]) : 'n/a', '', king ? md(king.exp) + ' · ' + fmt$(king.v) : '', 'king'],
+    [(view === 'delta' ? 'Δ ' : 'Net ') + G.name, fmt$(net), net >= 0 ? 'pos' : 'neg', expNote],
+  ].map(([k, v, cls, n, cc]) => `<div class="chip ${cc || ''}"><span class="k">${k}</span><span class="v ${cls}">${v}</span><span class="n">${n || '&nbsp;'}</span></div>`).join('');
+  if (view === 'delta' && !delta) {
+    $('gridbox').innerHTML = '<div class="empty">No at-the-open snapshot for ' + esc(chain.ticker) + ' yet today. It is saved by the first refresh after 9:30 ET, or the first time you open this ticker during market hours.</div>';
+    return;
+  }
 
   if (!strikes.length) { $('gridbox').innerHTML = '<div class="empty">No strikes in this range. Widen the strike range.</div>'; return; }
 
@@ -352,7 +418,7 @@ function render() {
     for (const d of dtes) {
       const key = k + '|' + d, v = val(cells.get(key), metric);
       const st = shade(v, scale === 'col' ? colMax[d] : gMax);
-      h += `<td data-key="${key}"${st ? ` style="${st}"` : ''}${key === selKey ? ' class="sel"' : ''}>${fmt$(v)}</td>`;
+      h += `<td data-key="${key}"${st ? ` style="${st}"` : ''}${key === selKey ? ' class="sel"' : king && key === king.key ? ' class="king"' : ''}>${fmt$(v)}</td>`;
     }
     h += `<td class="tot" data-key="${k}|tot" style="${shade(rowTot[k], totMax)}">${fmt$(rowTot[k])}</td></tr>`;
   }
@@ -362,12 +428,12 @@ function render() {
   if (row && !render.scrolled) { const box = $('gridbox'); box.scrollTop = row.offsetTop - box.clientHeight / 2; render.scrolled = true; }
   render.last = { cells, metric, S };
 }
-function gammaFlip(S) {
+function gammaFlip(S, dteSet) {
   // total GEX across a grid of hypothetical spots; find the sign change nearest spot
   const pts = [];
   for (let i = -40; i <= 40; i++) {
     const x = S * (1 + i * 0.005); let tot = 0;
-    for (const r of chain.rows) tot += bsGamma(x, r.k, r.dte / 365, r.iv || 0.3) * r.oi * (r.type === 'C' ? 1 : -1);
+    for (const r of chain.rows) if (!dteSet || dteSet.has(r.dte)) tot += bsGamma(x, r.k, r.dte / 365, r.iv || 0.3) * r.oi * (r.type === 'C' ? 1 : -1);
     pts.push([x, tot]);
   }
   let best = null;
@@ -397,6 +463,16 @@ $('gridbox').addEventListener('click', e => {
   td.classList.add('sel'); selKey = td.dataset.key; showDetail(td);
 });
 $('gridbox').addEventListener('mouseover', e => { const td = e.target.closest('td'); if (td) showDetail(td); });
+function seg(id, set) {
+  $(id).addEventListener('click', e => {
+    const b = e.target.closest('button[data-v]'); if (!b) return;
+    $(id).querySelectorAll('button').forEach(x => x.classList.toggle('on', x === b));
+    set(b.dataset.v); if (chain) render();
+  });
+}
+seg('greekSeg', v => greek = v);
+seg('expSeg', v => expMode = v);
+seg('viewSeg', v => view = v);
 ['spot', 'range', 'maxExp', 'metric', 'scale'].forEach(id => $(id).addEventListener('input', () => chain && render()));
 $('loadBtn').addEventListener('click', () => $('file').click());
 $('demoBtn').addEventListener('click', () => { shownKey = ''; chain = sampleChain(); $('spot').value = chain.spot; render.scrolled = false; render(); });
@@ -433,9 +509,36 @@ function put(tk, text, asOf, source, msg) {
   const before = chain;
   ingest(text, 'Public');
   if (chain === before) return false;  // ingest kept the old chain: the text did not parse
-  chain.ticker = tk; chain.asOf = asOf; chain.source = source; render();
+  chain.ticker = tk; chain.asOf = asOf; chain.source = source;
+  noteOpen(tk, text, asOf);
+  render();
   shownKey = key; $('tkMsg').innerHTML = msg;
+  if (switching || !openChain || openChain.tk !== tk) loadOpen(tk);
   return true;
+}
+// "change since open" baseline: the GitHub Action's first snapshot after 9:30 ET (data/open/), or else the
+// first chain this browser saw for that ticker after 9:30 ET today
+const etNow = () => new Date(new Date().toLocaleString('en-US', { timeZone: 'America/New_York' }));
+const etDay = () => { const d = etNow(); return d.getFullYear() + '-' + String(d.getMonth() + 1).padStart(2, '0') + '-' + String(d.getDate()).padStart(2, '0'); };
+const hm = d => new Date(d).toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
+function store(k, v) { try { if (v === undefined) return JSON.parse(localStorage.getItem(k) || 'null'); localStorage.setItem(k, JSON.stringify(v)); } catch (e) { return null; } }
+function noteOpen(tk, text, asOf) {
+  const n = etNow(), mins = n.getHours() * 60 + n.getMinutes();
+  if (n.getDay() % 6 === 0 || mins < 570 || mins > 960) return;
+  const k = 'gw-open:' + tk, cur = store(k);
+  if (!cur || cur.date !== etDay()) store(k, { date: etDay(), asof: +asOf, csv: text });
+}
+async function loadOpen(tk) {
+  openChain = null;
+  const m = meta.tickers[tk], today = etDay();
+  const use = (text, asOf, who) => {
+    try { const c = parseCsv(text); openChain = { tk, rows: c.rows, spot: c.spot, label: hm(asOf) + ' ' + who }; } catch (e) { openChain = null; }
+  };
+  if (m && m.open_date === today) {
+    try { use(await getText('data/open/' + tk + '.csv?t=' + today), m.open_asof, '(saved at the open)'); } catch (e) { /* fall back to this browser */ }
+  }
+  if (!openChain) { const b = store('gw-open:' + tk); if (b && b.date === today) use(b.csv, b.asof, '(first load today)'); }
+  if (chain && chain.ticker === tk && view === 'delta') render();
 }
 async function show(tk, quiet) {
   tk = tk.trim().toUpperCase().replace(/^\$/, '');
